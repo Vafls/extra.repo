@@ -23,6 +23,14 @@
       "version": "1.0.2",
       "key": "ENT2024PRO",
       "author": "File Systems Inc"
+    },
+    {
+      "name": "Terminal",
+      "file": "https://raw.githubusercontent.com/Vafls/extra.repo/refs/heads/main/terminal.html",
+      "description": "Terminal emulator",
+      "version": "0.0.1",
+      "key": "ENT2024STD",
+      "author": "Vafls"
     }
   ]
 }
