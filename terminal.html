@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Embedded Project Terminal</title>
+    <style>
+        :root{--bg:#0b0f14;--fg:#dbe7ff;--accent:#39a0ff;--muted:#8b99b3}
+        html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial}
+        body{background:linear-gradient(180deg,#061021 0%, #0b0f14 100%);color:var(--fg);display:flex;align-items:stretch}
+        .terminal{margin:20px auto;padding:16px;border-radius:8px;width:100%;max-width:1100px;box-shadow:0 6px 30px rgba(2,8,23,.6);background:rgba(3,7,14,.6);display:flex;flex-direction:column;height:84vh}
+        .header{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+        .brand{font-weight:600;color:var(--accent)}
+        .output{flex:1;overflow:auto;padding:12px;border-radius:6px;background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);font-family:monospace;font-size:13px;line-height:1.45}
+        .input-row{display:flex;gap:8px;margin-top:10px}
+        .prompt{min-width:80px;padding:10px 12px;background:rgba(255,255,255,0.02);border-radius:6px;color:var(--muted);font-family:monospace}
+        input.cmd{flex:1;padding:10px 12px;background:transparent;border:1px solid rgba(255,255,255,0.04);border-radius:6px;color:var(--fg);outline:none;font-family:monospace}
+        .btn{background:var(--accent);border:none;color:#fff;padding:8px 12px;border-radius:6px;cursor:pointer}
+        .small{font-size:12px;color:var(--muted)}
+        .line{white-space:pre-wrap;margin:6px 0}
+        .item{border-left:3px solid rgba(255,255,255,0.03);padding:8px 10px;margin:8px 0;border-radius:4px;background:rgba(255,255,255,0.01)}
+        .meta{color:var(--muted);font-size:12px}
+        .editor-modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(2,6,12,0.6);z-index:999}
+        .editor{width:90%;max-width:920px;background:#071122;padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);box-shadow:0 10px 40px rgba(0,0,0,.7)}
+        .editor textarea{width:100%;height:56vh;background:#031523;color:var(--fg);border:1px solid rgba(255,255,255,0.03);padding:10px;border-radius:6px;font-family:monospace}
+        .editor .row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
+        .hidden{display:none}
+        a.link{color:var(--accent);text-decoration:underline}
+        .error{color:#ff7b7b}
+        @media (max-width:600px){.prompt{display:none}}
+    </style>
+</head>
+<body>
+    <div class="terminal" role="application" aria-label="Project terminal">
+        <div class="header">
+            <div class="brand">Embedded Terminal</div>
+            <div class="small">Manage users, keys, apps, repos — commands: help</div>
+            <div style="margin-left:auto" class="small">Persistence: localStorage</div>
+        </div>
+
+        <div id="output" class="output" tabindex="0"></div>
+
+        <div class="input-row">
+            <div class="prompt">project@terminal:~$</div>
+            <input id="cmd" class="cmd" autocomplete="off" spellcheck="false" placeholder='Введите "help" для списка команд'/>
+            <button id="enter" class="btn">Run</button>
+        </div>
+    </div>
+
+    <!-- Editor modal -->
+    <div id="editorModal" class="editor-modal" role="dialog" aria-modal="true">
+        <div class="editor" role="document">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div id="editorTitle" class="small"></div>
+                <div class="small"><span id="editorMeta"></span></div>
+            </div>
+            <textarea id="editorTextarea" spellcheck="false"></textarea>
+            <div class="row">
+                <button id="editorCancel" class="btn" style="background:#6b7280">Cancel</button>
+                <button id="editorSave" class="btn">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Embedded Terminal app (single file) - designed to be embedded into another project.
+        // Data persists in localStorage; initial data comes from the provided JSON sets.
+        (function(){
+            // Initial data (merged from provided databases)
+            const initialDB = {
+                users: [
+                    {"username":"admin","password":"admin123","theme":"light","key":"ENT2024PRO","role":"administrator","created":"2024-01-01T12:00:00"},
+                    {"username":"user","password":"user123","theme":"light","key":"ENT2024STD","role":"user","created":"2024-01-01T12:00:00"},
+                    {"username":"ргн","password":"хуй","theme":"light","key":"","role":"administrator","created":"2025-11-08T13:11:57.454430"}
+                ],
+                keys: [
+                    {"key":"ENT2024PRO","info":"Enterprise Pro License - Full Access","level":"pro","expires":"2024-12-31"},
+                    {"key":"ENT2024STD","info":"Enterprise Standard License - Basic Access","level":"standard","expires":"2024-12-31"}
+                ],
+                apps: [
+                    {"name":"Браузер Enterprise","icon":"/static/icons/browser.ico","version":"2.1.4","subscription":"Веб-браузер с корпоративной защитой","key":"ENT2024PRO","type":"system"},
+                    {"name":"Системные настройки","icon":"/static/icons/settings.ico","version":"1.0.0","subscription":"Настройка системы и безопасности","key":"ENT2024STD","type":"system"},
+                    {"name":"Текстовый редактор Pro","file":"https://raw.githubusercontent.com/example/text-editor/main/app.html","description":"Продвинутый текстовый редактор с подсветкой синтаксиса","version":"1.5.0","key":"ENT2024PRO","author":"Text Editor Team"},
+                    {"name":"Калькулятор Scientific","file":"https://raw.githubusercontent.com/example/calculator/main/app.html","description":"Научный калькулятор с графиками и функциями","version":"2.1.3","key":"ENT2024STD","author":"Calc Dev Team"},
+                    {"name":"Менеджер файлов","file":"https://raw.githubusercontent.com/example/file-manager/main/app.html","description":"Файловый менеджер с облачной синхронизацией","version":"1.0.2","key":"ENT2024PRO","author":"File Systems Inc"}
+                ],
+                repos: [
+                    {"name":"Официальный репозиторий Enterprise OS","repo_key":"ENT2024PRO","repo_author":"Enterprise OS Team","repo_license":"MIT","repo_link":"https://raw.githubusercontent.com/example/enterprise-os-repo/main/repo.json"},
+                    {"name":"Тестовый репозиторий приложений","repo_key":"ENT2024STD","repo_author":"Test Developer","repo_license":"Apache 2.0","repo_link":"https://raw.githubusercontent.com/example/test-repo/main/repo.json"}
+                ]
+            };
+
+            const STORAGE_KEY = 'embedded_terminal_db_v1';
+
+            // DOM
+            const output = document.getElementById('output');
+            const cmdInput = document.getElementById('cmd');
+            const enterBtn = document.getElementById('enter');
+            const editorModal = document.getElementById('editorModal');
+            const editorTextarea = document.getElementById('editorTextarea');
+            const editorTitle = document.getElementById('editorTitle');
+            const editorMeta = document.getElementById('editorMeta');
+            const editorCancel = document.getElementById('editorCancel');
+            const editorSave = document.getElementById('editorSave');
+
+            // Load or initialize DB
+            let DB = loadDB();
+
+            function loadDB(){
+                try {
+                    const raw = localStorage.getItem(STORAGE_KEY);
+                    if (!raw) { saveDB(initialDB); return deepClone(initialDB); }
+                    return JSON.parse(raw);
+                } catch(e){
+                    console.error('Failed to load DB, resetting to initial', e);
+                    saveDB(initialDB);
+                    return deepClone(initialDB);
+                }
+            }
+
+            function saveDB(db){
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(db, null, 2));
+            }
+
+            function deepClone(v){ return JSON.parse(JSON.stringify(v)); }
+
+            // Utility keys for collections
+            const keyMap = {
+                users: 'username',
+                keys: 'key',
+                apps: 'name',
+                repos: 'name'
+            };
+
+            // Printing helpers
+            function println(txt, cls){ const el = document.createElement('div'); el.className = 'line' + (cls ? ' '+cls : ''); el.textContent = txt; output.appendChild(el); output.scrollTop = output.scrollHeight; }
+            function printrich(node){ output.appendChild(node); output.scrollTop = output.scrollHeight; }
+
+            function clearOutput(){ output.innerHTML = ''; }
+
+            // Command handling
+            function handleCommand(raw){
+                const line = raw.trim();
+                if (!line) return;
+                println('> ' + line, 'meta');
+                const parts = tokenize(line);
+                const cmd = (parts.shift() || '').toLowerCase();
+
+                switch(cmd){
+                    case 'help': showHelp(); break;
+                    case 'clear': clearOutput(); break;
+                    case 'list': cmdList(parts); break;
+                    case 'show': cmdShow(parts); break;
+                    case 'add': cmdAdd(parts); break;
+                    case 'edit': cmdEdit(parts); break;
+                    case 'set': cmdSet(parts); break;
+                    case 'delete':
+                    case 'del': cmdDelete(parts); break;
+                    case 'export': cmdExport(parts); break;
+                    case 'editor': openEditorCmd(parts); break;
+                    case 'reset': cmdReset(parts); break;
+                    default: println('Unknown command: ' + cmd + ' — введите "help" для списка команд', 'error');
+                }
+            }
+
+            // Simple tokenizer: supports JSON-argument extraction when bracketed
+            function tokenize(s){
+                // If contains JSON (starts with '{' or '[') as last argument, capture it
+                const jsonStart = s.search(/[\{\[]/);
+                if (jsonStart >= 0){
+                    const before = s.slice(0, jsonStart).trim();
+                    const jsonPart = s.slice(jsonStart).trim();
+                    const tokens = before ? before.split(/\s+/) : [];
+                    tokens.push(jsonPart);
+                    return tokens;
+                } else {
+                    return s.split(/\s+/).filter(Boolean);
+                }
+            }
+
+            function showHelp(){
+                const h = [
+                    'Доступные команды:',
+                    ' help                        — показать это сообщение',
+                    ' clear                       — очистить терминал',
+                    ' list <collection>           — перечислить элементы (users|keys|apps|repos)',
+                    ' show <collection> <id>      — показать элемент по ключу',
+                    ' add <collection> <json>     — добавить элемент (json объект)',
+                    ' edit <collection> <id> <jsonPatch> — редактировать (patch: полный объект или отдельные поля)',
+                    ' set <collection> <id> <field> <value> — установить поле',
+                    ' delete <collection> <id>    — удалить элемент',
+                    ' export <collection>         — вывести JSON коллекции',
+                    ' editor <collection> <id> <field> — открыть встроенный текстовый редактор для поля',
+                    ' reset                       — сбросить базу к начальным данным (перезапишет localStorage)',
+                    '',
+                    'Примеры:',
+                    ' list users',
+                    ' show users admin',
+                    ' add users {"username":"bob","password":"p","role":"user","created":"2025-01-01T00:00:00"}',
+                    ' edit apps "Менеджер файлов" {"description":"Новое описание","version":"1.0.3"}',
+                    ' set users bob theme dark',
+                    ' editor apps "Текстовый редактор Pro" description'
+                ];
+                h.forEach(l => println(l));
+            }
+
+            function findCollection(name){
+                name = (name||'').toLowerCase();
+                if (name === 'user' || name === 'users') return 'users';
+                if (name === 'key' || name === 'keys') return 'keys';
+                if (name === 'app' || name === 'apps') return 'apps';
+                if (name === 'repo' || name === 'repos') return 'repos';
+                return null;
+            }
+
+            function cmdList(args){
+                const coll = findCollection(args[0]);
+                if (!coll) { println('Укажите collection: users|keys|apps|repos'); return; }
+                const arr = DB[coll] || [];
+                if (!arr.length){ println(coll + ' — пусто'); return; }
+                arr.forEach(item => {
+                    const container = document.createElement('div');
+                    container.className = 'item';
+                    const title = document.createElement('div');
+                    const key = keyMap[coll];
+                    title.textContent = item[key] || '(без ключа)';
+                    title.style.fontWeight = '600';
+                    container.appendChild(title);
+                    const meta = document.createElement('div');
+                    meta.className = 'meta';
+                    const preview = JSON.stringify(item, replacerPreview, 2);
+                    meta.textContent = preview;
+                    container.appendChild(meta);
+                    printrich(container);
+                });
+            }
+
+            function replacerPreview(key, value){
+                if (typeof value === 'string' && value.length > 120) return value.slice(0, 116) + '…';
+                return value;
+            }
+
+            function cmdShow(args){
+                const coll = findCollection(args[0]);
+                const id = args.slice(1).join(' ').trim();
+                if (!coll || !id) { println('Использование: show <collection> <id>'); return; }
+                const item = getItem(coll, id);
+                if (!item) { println('Элемент не найден: ' + id, 'error'); return; }
+                const pre = document.createElement('pre');
+                pre.style.whiteSpace = 'pre-wrap';
+                pre.textContent = JSON.stringify(item, null, 2);
+                printrich(pre);
+            }
+
+            function cmdAdd(args){
+                const coll = findCollection(args[0]);
+                const jsonStr = args.slice(1).join(' ').trim();
+                if (!coll || !jsonStr) { println('Использование: add <collection> <json>'); return; }
+                try {
+                    const obj = JSON.parse(jsonStr);
+                    if (Array.isArray(obj)){
+                        // add many
+                        obj.forEach(o => DB[coll].push(o));
+                    } else {
+                        DB[coll].push(obj);
+                    }
+                    saveDB(DB);
+                    println('Добавлено в ' + coll);
+                } catch(e){
+                    println('Ошибка парсинга JSON: ' + e.message, 'error');
+                }
+            }
+
+            function cmdEdit(args){
+                const coll = findCollection(args[0]);
+                const id = args[1];
+                const jsonStr = args.slice(2).join(' ').trim();
+                if (!coll || !id || !jsonStr) { println('Использование: edit <collection> <id> <jsonPatch>'); return; }
+                const item = getItem(coll, id);
+                if (!item) { println('Элемент не найден: ' + id, 'error'); return; }
+                try {
+                    const patch = JSON.parse(jsonStr);
+                    if (typeof patch !== 'object') throw new Error('patch не объект');
+                    // merge
+                    const idx = findIndex(coll, id);
+                    DB[coll][idx] = Object.assign({}, DB[coll][idx], patch);
+                    saveDB(DB);
+                    println('Обновлено: ' + id);
+                } catch(e){
+                    println('Ошибка парсинга JSON/patch: ' + e.message, 'error');
+                }
+            }
+
+            function cmdSet(args){
+                const coll = findCollection(args[0]);
+                const id = args[1];
+                const field = args[2];
+                const value = args.slice(3).join(' ');
+                if (!coll || !id || !field) { println('Использование: set <collection> <id> <field> <value>'); return; }
+                const idx = findIndex(coll, id);
+                if (idx < 0) { println('Элемент не найден: ' + id, 'error'); return; }
+                // try to interpret JSON value for types
+                let val = value;
+                if (value === 'true' || value === 'false') val = (value === 'true');
+                else if (!isNaN(Number(value)) && value.trim() !== '') val = Number(value);
+                else {
+                    try {
+                        val = JSON.parse(value);
+                    } catch(e){ /* keep string */ }
+                }
+                DB[coll][idx][field] = val;
+                saveDB(DB);
+                println('Поле установлено');
+            }
+
+            function cmdDelete(args){
+                const coll = findCollection(args[0]);
+                const id = args.slice(1).join(' ').trim();
+                if (!coll || !id) { println('Использование: delete <collection> <id>'); return; }
+                const idx = findIndex(coll, id);
+                if (idx < 0) { println('Элемент не найден: ' + id, 'error'); return; }
+                const removed = DB[coll].splice(idx,1);
+                saveDB(DB);
+                println('Удалено: ' + (removed[0] && (removed[0][keyMap[coll]] || 'item')));
+            }
+
+            function cmdExport(args){
+                const coll = findCollection(args[0]);
+                if (!coll) { println('Укажите collection для export'); return; }
+                const pre = document.createElement('pre');
+                pre.style.whiteSpace = 'pre-wrap';
+                pre.textContent = JSON.stringify(DB[coll], null, 2);
+                printrich(pre);
+            }
+
+            function cmdReset(){
+                // Confirm (simple)
+                if (!confirm('Сбросить базу к исходным данным? Это перезапишет localStorage.')) return;
+                DB = deepClone(initialDB);
+                saveDB(DB);
+                println('База сброшена к начальному состоянию');
+            }
+
+            // Editor command: editor <collection> <id> <field>
+            let currentEditorContext = null;
+            function openEditorCmd(args){
+                const coll = findCollection(args[0]);
+                const id = args[1];
+                const field = args.slice(2).join(' ') || 'description';
+                if (!coll || !id || !field) { println('Использование: editor <collection> <id> <field>'); return; }
+                const item = getItem(coll, id);
+                if (!item) { println('Элемент не найден: ' + id, 'error'); return; }
+                const value = item[field] || '';
+                openEditor({
+                    collection: coll,
+                    id: id,
+                    field: field,
+                    value: (typeof value === 'object') ? JSON.stringify(value, null, 2) : String(value)
+                });
+            }
+
+            function openEditor(ctx){
+                currentEditorContext = ctx;
+                editorTitle.textContent = ctx.collection + ' / ' + ctx.id;
+                editorMeta.textContent = 'Поле: ' + ctx.field;
+                editorTextarea.value = ctx.value || '';
+                editorModal.style.display = 'flex';
+                editorTextarea.focus();
+            }
+
+            editorCancel.addEventListener('click', () => { editorModal.style.display = 'none'; currentEditorContext = null; });
+            editorSave.addEventListener('click', () => {
+                if (!currentEditorContext) { editorModal.style.display = 'none'; return; }
+                const text = editorTextarea.value;
+                const coll = currentEditorContext.collection;
+                const id = currentEditorContext.id;
+                const field = currentEditorContext.field;
+                const idx = findIndex(coll, id);
+                if (idx < 0) { println('Элемент не найден при сохранении: ' + id); editorModal.style.display = 'none'; currentEditorContext = null; return; }
+                // Try to parse JSON for object fields
+                let val = text;
+                try {
+                    val = JSON.parse(text);
+                } catch(e){
+                    // keep as string
+                    val = text;
+                }
+                DB[coll][idx][field] = val;
+                saveDB(DB);
+                println('Сохранено в ' + coll + ' -> ' + id + ' [' + field + ']');
+                editorModal.style.display = 'none';
+                currentEditorContext = null;
+            });
+
+            // Helpers to get item by key (case-sensitive by default); allow quoting id with spaces
+            function findIndex(coll, idRaw){
+                const id = stripQuotes(idRaw);
+                const key = keyMap[coll];
+                const arr = DB[coll] || [];
+                return arr.findIndex(x => String(x[key]) === String(id));
+            }
+
+            function getItem(coll, idRaw){
+                const idx = findIndex(coll, idRaw);
+                return idx >= 0 ? DB[coll][idx] : null;
+            }
+
+            function stripQuotes(s){
+                if (!s) return s;
+                s = s.trim();
+                if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) return s.slice(1,-1);
+                return s;
+            }
+
+            // Bind input
+            enterBtn.addEventListener('click', () => { handleAndClear(); });
+            cmdInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleAndClear(); }
+                else if (e.key === 'ArrowUp') {
+                    // optional: recall last command
+                }
+            });
+
+            function handleAndClear(){
+                const v = cmdInput.value;
+                handleCommand(v);
+                cmdInput.value = '';
+                cmdInput.focus();
+            }
+
+            // Initial greeting
+            println('Проектный терминал загружен. Введите "help" для списка команд.');
+            println('База данных загружена из localStorage (ключ: ' + STORAGE_KEY + ').');
+
+            // Expose some helpers to parent page (embedding)
+            window.EmbeddedTerminal = {
+                getDB: () => deepClone(DB),
+                setDB: (obj) => { if (!obj) throw new Error('setDB expects object'); DB = obj; saveDB(DB); println('DB updated via API'); },
+                openEditor: (collection, id, field) => { openEditor({collection, id, field, value: String(getItem(collection, id)?.[field]||'')}); }
+            };
+
+        })();
+    </script>
+</body>
+</html>
